@@ -23,5 +23,4 @@ python3 main.py --token_level word-level \
                   --learning_rate $lr \
                   --train_batch_size 32 \
                   --attention_mechanism mhsa \
-                  --optimizer adamw \
-                  --no_cuda
+                  --optimizer adamw
