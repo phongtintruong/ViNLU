@@ -29,7 +29,7 @@ python3 main.py --token_level word-level \
                   --intent_loss_coef $c \
                   --pretrained \
                   --pretrained_path JointBERT-CRF_PhoBERTencoder/3e-5/0.6/100 \
-                  --learning_rate $lr
+                  --learning_rate $lr \
                   --attention_mechanism mhsa \
                   --optimizer adamw \
                   --num_heads 20

@@ -14,7 +14,8 @@ python3 main.py --token_level word-level \
                   --do_eval \
                   --save_steps 140 \
                   --logging_steps 140 \
-                  --num_train_epochs 20 \
+                  --num_train_epochs 50 \
+                  --attention_embedding_size 200 \
                   --tuning_metric mean_intent_slot \
                   --use_crf \
                   --gpu_id 0 \
