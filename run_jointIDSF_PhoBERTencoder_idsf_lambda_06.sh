@@ -1,6 +1,21 @@
-#As we initialize JointIDSF from JointBERT, user need to train a base model JointBERT first
-#./run_jointBERT-CRF_PhoBERTencoder.sh
-#Train JointIDSF
+#!/bin/bash
+
+# Parse command-line arguments for pretrained_path
+while getopts p: flag
+do
+    case "${flag}" in
+        p) pretrained_path=${OPTARG};;
+    esac
+done
+
+# Check if pretrained_path was provided
+if [ -z "$pretrained_path" ]
+then
+    echo "Error: Pretrained path is not provided. Use -p <path> to specify it."
+    exit 1
+fi
+
+# Train JointIDSF
 export lr=4e-5
 export c=0.6
 export s=100
@@ -8,6 +23,7 @@ echo "${lr}"
 export MODEL_DIR=JointIDSF_PhoBERTencoder
 export MODEL_DIR=$MODEL_DIR"/"$lr"/"$c"/"$s
 echo "${MODEL_DIR}"
+
 python3 main.py --token_level word-level \
                   --model_type phobert \
                   --model_dir $MODEL_DIR \
@@ -26,5 +42,5 @@ python3 main.py --token_level word-level \
                   --embedding_type soft \
                   --intent_loss_coef $c \
                   --pretrained \
-                  --pretrained_path JointBERT-CRF_PhoBERTencoder/3e-5/0.6/100 \
+                  --pretrained_path $pretrained_path \
                   --learning_rate $lr
