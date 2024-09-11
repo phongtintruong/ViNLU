@@ -17,11 +17,13 @@ from transformers import (
 MODEL_CLASSES = {
     "xlmr": (XLMRobertaConfig, JointXLMR, XLMRobertaTokenizer),
     "phobert": (RobertaConfig, JointPhoBERT, AutoTokenizer),
+    "clphobert": (RobertaConfig, JointPhoBERT, AutoTokenizer),
 }
 
 MODEL_PATH_MAP = {
     "xlmr": "xlm-roberta-base",
     "phobert": "vinai/phobert-base",
+    "clphobert": "phongtintruong/clphobert-base-16-256-50-30",
 }
 
 
