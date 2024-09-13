@@ -1,3 +1,4 @@
+
 import argparse
 import logging
 import os
@@ -26,8 +27,6 @@ def load_model(pred_config, args, device):
         raise Exception("Model doesn't exists! Train first!")
 
     try:
-        print('################################')
-        print(args)
         model = MODEL_CLASSES[args.model_type][1].from_pretrained(
             args.model_dir, args=args, intent_label_lst=get_intent_labels(args), slot_label_lst=get_slot_labels(args)
         )
@@ -151,7 +150,6 @@ def predict(pred_config):
     all_slot_label_mask = None
     intent_preds = None
     slot_preds = None
-    slot_argmax = None
 
     for batch in tqdm(data_loader, desc="Predicting"):
         batch = tuple(t.to(device) for t in batch)
@@ -164,7 +162,7 @@ def predict(pred_config):
             }
             if args.model_type != "distilbert":
                 inputs["token_type_ids"] = batch[2]
-            intent_loss, slot_loss, outputs = model(**inputs)
+            outputs = model(**inputs)
             _, (intent_logits, slot_logits) = outputs[:2]
 
             # Intent Prediction
@@ -188,13 +186,10 @@ def predict(pred_config):
                     slot_preds = np.append(slot_preds, slot_logits.detach().cpu().numpy(), axis=0)
                 all_slot_label_mask = np.append(all_slot_label_mask, batch[3].detach().cpu().numpy(), axis=0)
 
-    intent_logits = torch.from_numpy(np.copy(intent_preds))
     intent_preds = np.argmax(intent_preds, axis=1)
 
     if not args.use_crf:
-        slot_preds = np.argmax(slot_preds, axis=2) # batch_size, seq_length
-
-    # slot_argmax = np.argmax(slot_preds, axis= 2)
+        slot_preds = np.argmax(slot_preds, axis=2)
 
     slot_label_map = {i: label for i, label in enumerate(slot_label_lst)}
     slot_preds_list = [[] for _ in range(slot_preds.shape[0])]
@@ -217,15 +212,6 @@ def predict(pred_config):
 
     logger.info("Prediction Done!")
 
-    np.savetxt(pred_config.intent_logits, torch.nn.functional.softmax(intent_logits, dim= -1).cpu().detach().numpy())
-
-    # idx = torch.tensor(slot_argmax)
-    # idx = idx.reshape((idx.shape[0], idx.shape[1], -1))
-    # slots_pred_logits = torch.gather(slot_logits, dim= 2, index= idx)
-    # np.savetxt(pred_config.intent_logits, slots_pred_logits.cpu().detach().numpy())
-
-    logger.info('Exporting logits Done!')
-
 
 if __name__ == "__main__":
     init_logger()
@@ -237,9 +223,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--batch_size", default=32, type=int, help="Batch size for prediction")
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
-
-    parser.add_argument("--intent_logits", default="./intent_logits.txt", type=str, help="Path to intent logits")
-    parser.add_argument("--slot_logits", default="./intent_logits.txt", type=str, help="Path to intent logits")
 
     pred_config = parser.parse_args()
     predict(pred_config)
