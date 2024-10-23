@@ -98,6 +98,22 @@ if __name__ == "__main__":
     parser.add_argument("--slot_loss_weight", type=float, default=1.0, help="Weight for the slot loss.")
     parser.add_argument("--contrastive_loss_weight", type=float, default=1.0, help="Weight for the contrastive loss.")
 
+    parser.add_argument(
+        "--token_level",
+        type=str,
+        default="word-level",
+        help="Tokens are at syllable level or word level (Vietnamese) [word-level, syllable-level]",
+    )
+
+    parser.add_argument(
+        "--early_stopping",
+        type=int,
+        default=50,
+        help="Number of unincreased validation step to wait for early stopping",
+    )
+
+    parser.add_argument("--gpu_id", type=int, default=0, help="Select gpu id")
+
     # New flag to use contrastive learning
     parser.add_argument("--use_contrastive_learning", action="store_true", help="Use triplet-based contrastive learning")
 
