@@ -2,11 +2,11 @@ import copy
 import json
 import logging
 import os
+import random
 
 import torch
 from torch.utils.data import TensorDataset
 from utils import get_intent_labels, get_slot_labels
-
 
 logger = logging.getLogger(__name__)
 
@@ -265,5 +265,289 @@ def load_and_cache_examples(args, tokenizer, mode):
 
     dataset = TensorDataset(
         all_input_ids, all_attention_mask, all_token_type_ids, all_intent_label_ids, all_slot_labels_ids
+    )
+    return dataset
+
+
+class TripletInputExample(object):
+    """
+    A single training/test example for triplet-based contrastive learning.
+
+    Args:
+        guid: Unique id for the example.
+        anchor_words: list. The words of the anchor sentence.
+        positive_words: list. The words of the positive sentence (same intent).
+        negative_words: list. The words of the negative sentence (different intent).
+        intent_label: (Optional) string. The intent label of the anchor example.
+        slot_labels: (Optional) list. The slot labels of the anchor example.
+    """
+
+    def __init__(self, guid, anchor_words, positive_words, negative_words, intent_label=None, slot_labels=None):
+        self.guid = guid
+        self.anchor_words = anchor_words
+        self.positive_words = positive_words
+        self.negative_words = negative_words
+        self.intent_label = intent_label
+        self.slot_labels = slot_labels
+
+    def __repr__(self):
+        return str(self.to_json_string())
+
+    def to_dict(self):
+        """Serializes this instance to a Python dictionary."""
+        output = copy.deepcopy(self.__dict__)
+        return output
+
+    def to_json_string(self):
+        """Serializes this instance to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
+class TripletInputFeatures(object):
+    """
+    A single set of features for triplet-based contrastive learning.
+
+    Args:
+        anchor_input_ids: Input IDs for the anchor sentence.
+        positive_input_ids: Input IDs for the positive sentence (same intent).
+        negative_input_ids: Input IDs for the negative sentence (different intent).
+        anchor_attention_mask: Attention mask for the anchor sentence.
+        positive_attention_mask: Attention mask for the positive sentence.
+        negative_attention_mask: Attention mask for the negative sentence.
+        anchor_token_type_ids: Token type IDs for the anchor sentence.
+        positive_token_type_ids: Token type IDs for the positive sentence.
+        negative_token_type_ids: Token type IDs for the negative sentence.
+        intent_label_id: The intent label ID for the anchor sentence.
+        slot_labels_ids: The slot labels IDs for the anchor sentence.
+    """
+
+    def __init__(self, anchor_input_ids, positive_input_ids, negative_input_ids,
+                 anchor_attention_mask, positive_attention_mask, negative_attention_mask,
+                 anchor_token_type_ids, positive_token_type_ids, negative_token_type_ids,
+                 intent_label_id, slot_labels_ids):
+        self.anchor_input_ids = anchor_input_ids
+        self.positive_input_ids = positive_input_ids
+        self.negative_input_ids = negative_input_ids
+        self.anchor_attention_mask = anchor_attention_mask
+        self.positive_attention_mask = positive_attention_mask
+        self.negative_attention_mask = negative_attention_mask
+        self.anchor_token_type_ids = anchor_token_type_ids
+        self.positive_token_type_ids = positive_token_type_ids
+        self.negative_token_type_ids = negative_token_type_ids
+        self.intent_label_id = intent_label_id
+        self.slot_labels_ids = slot_labels_ids
+
+    def __repr__(self):
+        return str(self.to_json_string())
+
+    def to_dict(self):
+        """Serializes this instance to a Python dictionary."""
+        output = copy.deepcopy(self.__dict__)
+        return output
+
+    def to_json_string(self):
+        """Serializes this instance to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
+class TripletProcessor(object):
+    """
+    Processor for creating triplet examples from the dataset for contrastive learning.
+
+    Args:
+        args: Arguments such as data directory, token level, etc.
+    """
+
+    def __init__(self, args):
+        self.args = args
+        self.intent_labels = get_intent_labels(args)
+        self.slot_labels = get_slot_labels(args)
+
+        self.input_text_file = "seq.in"
+        self.intent_label_file = "label"
+        self.slot_labels_file = "seq.out"
+
+    @classmethod
+    def _read_file(cls, input_file):
+        """Reads a file line by line."""
+        with open(input_file, "r", encoding="utf-8") as f:
+            return [line.strip() for line in f]
+
+    def _create_triplet_examples(self, texts, intents, slots, set_type):
+        """
+        Creates triplet examples for contrastive learning (anchor, positive, negative).
+
+        Args:
+            texts: List of sentences.
+            intents: List of intents corresponding to the sentences.
+            slots: List of slot labels for each sentence.
+            set_type: Specifies if it's 'train', 'dev', or 'test'.
+        """
+        examples = []
+        intent_to_sentences = {}
+
+        # Group sentences by intent
+        for i, intent in enumerate(intents):
+            if intent not in intent_to_sentences:
+                intent_to_sentences[intent] = []
+            intent_to_sentences[intent].append((texts[i], slots[i]))
+
+        # Generate triplets (anchor, positive, negative)
+        for i, (text, intent, slot) in enumerate(zip(texts, intents, slots)):
+            guid = f"{set_type}-{i}"
+            words = text.split()
+
+            # Positive sample (same intent)
+            positive_text, positive_slot = random.choice(intent_to_sentences[intent])
+            positive_words = positive_text.split()
+
+            # Negative sample (different intent)
+            negative_intent = random.choice([k for k in intent_to_sentences.keys() if k != intent])
+            negative_text, negative_slot = random.choice(intent_to_sentences[negative_intent])
+            negative_words = negative_text.split()
+
+            examples.append(TripletInputExample(
+                guid=guid,
+                anchor_words=words,
+                positive_words=positive_words,
+                negative_words=negative_words,
+                intent_label=intent,
+                slot_labels=slot
+            ))
+
+        return examples
+
+    def get_triplet_examples(self, mode):
+        """
+        Retrieves triplet examples for the specified mode (train, dev, test).
+
+        Args:
+            mode: Specifies the dataset split ('train', 'dev', 'test').
+        """
+        data_path = os.path.join(self.args.data_dir, self.args.token_level, mode)
+        logger.info(f"LOOKING AT {data_path}")
+        return self._create_triplet_examples(
+            texts=self._read_file(os.path.join(data_path, self.input_text_file)),
+            intents=self._read_file(os.path.join(data_path, self.intent_label_file)),
+            slots=self._read_file(os.path.join(data_path, self.slot_labels_file)),
+            set_type=mode,
+        )
+
+
+def convert_triplet_examples_to_features(
+        examples, max_seq_len, tokenizer, pad_token_label_id=-100, cls_token_segment_id=0, pad_token_segment_id=0,
+        sequence_a_segment_id=0, mask_padding_with_zero=True):
+    """
+    Converts the triplet examples (anchor, positive, negative) to input features.
+
+    Args:
+        examples: List of TripletInputExample objects.
+        max_seq_len: Maximum sequence length for tokenization.
+        tokenizer: Pretrained tokenizer.
+        pad_token_label_id: Padding label ID for slot labels.
+        cls_token_segment_id: Segment ID for CLS token.
+        pad_token_segment_id: Segment ID for padding token.
+        sequence_a_segment_id: Segment ID for the first part of the sentence.
+        mask_padding_with_zero: Whether to mask padding with 0 or 1.
+    """
+    cls_token = tokenizer.cls_token
+    sep_token = tokenizer.sep_token
+    pad_token_id = tokenizer.pad_token_id
+    features = []
+
+    for (ex_index, example) in enumerate(examples):
+        if ex_index % 5000 == 0:
+            logger.info(f"Writing example {ex_index} of {len(examples)}")
+
+        # Tokenize the anchor, positive, and negative sentences
+        anchor_input_ids, anchor_attention_mask = tokenize_sentence(example.anchor_words, tokenizer, max_seq_len)
+        positive_input_ids, positive_attention_mask = tokenize_sentence(example.positive_words, tokenizer, max_seq_len)
+        negative_input_ids, negative_attention_mask = tokenize_sentence(example.negative_words, tokenizer, max_seq_len)
+
+        intent_label_id = int(example.intent_label)
+
+        features.append(
+            TripletInputFeatures(
+                anchor_input_ids=anchor_input_ids,
+                positive_input_ids=positive_input_ids,
+                negative_input_ids=negative_input_ids,
+                anchor_attention_mask=anchor_attention_mask,
+                positive_attention_mask=positive_attention_mask,
+                negative_attention_mask=negative_attention_mask,
+                anchor_token_type_ids=[sequence_a_segment_id] * max_seq_len,
+                positive_token_type_ids=[sequence_a_segment_id] * max_seq_len,
+                negative_token_type_ids=[sequence_a_segment_id] * max_seq_len,
+                intent_label_id=intent_label_id,
+                slot_labels_ids=[pad_token_label_id] * max_seq_len
+            )
+        )
+
+    return features
+
+
+def tokenize_sentence(words, tokenizer, max_seq_len):
+    """Tokenizes and processes a sentence."""
+    tokens = []
+    for word in words:
+        word_tokens = tokenizer.tokenize(word)
+        tokens.extend(word_tokens)
+
+    # Apply special tokens and padding
+    if len(tokens) > max_seq_len - 2:
+        tokens = tokens[: (max_seq_len - 2)]
+    tokens = [tokenizer.cls_token] + tokens + [tokenizer.sep_token]
+    input_ids = tokenizer.convert_tokens_to_ids(tokens)
+
+    attention_mask = [1] * len(input_ids)
+    padding_length = max_seq_len - len(input_ids)
+    input_ids += [tokenizer.pad_token_id] * padding_length
+    attention_mask += [0] * padding_length
+
+    return input_ids, attention_mask
+
+
+def load_and_cache_triplet_examples(args, tokenizer, mode):
+    """
+    Loads and caches triplet examples for contrastive learning.
+
+    Args:
+        args: Arguments containing data and model configuration.
+        tokenizer: Pretrained tokenizer.
+        mode: Dataset mode ('train', 'dev', 'test').
+    """
+    processor = TripletProcessor(args)
+
+    cached_features_file = os.path.join(
+        args.data_dir,
+        f"cached_triplet_{mode}_{args.token_level}_{args.max_seq_len}"
+    )
+
+    if os.path.exists(cached_features_file):
+        logger.info(f"Loading triplet features from cached file {cached_features_file}")
+        features = torch.load(cached_features_file)
+    else:
+        logger.info(f"Creating triplet features from dataset at {args.data_dir}")
+        examples = processor.get_triplet_examples(mode)
+
+        features = convert_triplet_examples_to_features(
+            examples, args.max_seq_len, tokenizer, pad_token_label_id=args.ignore_index
+        )
+        torch.save(features, cached_features_file)
+
+    # Convert to Tensors and build dataset for triplet loss
+    all_anchor_input_ids = torch.tensor([f.anchor_input_ids for f in features], dtype=torch.long)
+    all_positive_input_ids = torch.tensor([f.positive_input_ids for f in features], dtype=torch.long)
+    all_negative_input_ids = torch.tensor([f.negative_input_ids for f in features], dtype=torch.long)
+
+    all_anchor_attention_mask = torch.tensor([f.anchor_attention_mask for f in features], dtype=torch.long)
+    all_positive_attention_mask = torch.tensor([f.positive_attention_mask for f in features], dtype=torch.long)
+    all_negative_attention_mask = torch.tensor([f.negative_attention_mask for f in features], dtype=torch.long)
+
+    all_intent_label_ids = torch.tensor([f.intent_label_id for f in features], dtype=torch.long)
+
+    dataset = TensorDataset(
+        all_anchor_input_ids, all_positive_input_ids, all_negative_input_ids,
+        all_anchor_attention_mask, all_positive_attention_mask, all_negative_attention_mask,
+        all_intent_label_ids
     )
     return dataset
