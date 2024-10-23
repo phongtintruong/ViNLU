@@ -435,36 +435,30 @@ class TripletProcessor(object):
 
 
 def convert_triplet_examples_to_features(
-        examples, max_seq_len, tokenizer, pad_token_label_id=-100, cls_token_segment_id=0, pad_token_segment_id=0,
-        sequence_a_segment_id=0, mask_padding_with_zero=True):
-    """
-    Converts the triplet examples (anchor, positive, negative) to input features.
-
-    Args:
-        examples: List of TripletInputExample objects.
-        max_seq_len: Maximum sequence length for tokenization.
-        tokenizer: Pretrained tokenizer.
-        pad_token_label_id: Padding label ID for slot labels.
-        cls_token_segment_id: Segment ID for CLS token.
-        pad_token_segment_id: Segment ID for padding token.
-        sequence_a_segment_id: Segment ID for the first part of the sentence.
-        mask_padding_with_zero: Whether to mask padding with 0 or 1.
-    """
+        examples, max_seq_len, tokenizer, pad_token_label_id=-100, cls_token_segment_id=0,
+        pad_token_segment_id=0, sequence_a_segment_id=0, mask_padding_with_zero=True):
     cls_token = tokenizer.cls_token
     sep_token = tokenizer.sep_token
     pad_token_id = tokenizer.pad_token_id
     features = []
 
+    # Load intent labels for mapping intent strings to integer IDs
+    intent_label_list = get_intent_labels(None)  # Assuming you load them globally or pass args
+
     for (ex_index, example) in enumerate(examples):
         if ex_index % 5000 == 0:
             logger.info(f"Writing example {ex_index} of {len(examples)}")
 
-        # Tokenize the anchor, positive, and negative sentences
+        # Tokenize sentences
         anchor_input_ids, anchor_attention_mask = tokenize_sentence(example.anchor_words, tokenizer, max_seq_len)
         positive_input_ids, positive_attention_mask = tokenize_sentence(example.positive_words, tokenizer, max_seq_len)
         negative_input_ids, negative_attention_mask = tokenize_sentence(example.negative_words, tokenizer, max_seq_len)
 
-        intent_label_id = int(example.intent_label)
+        # Map intent label string to an integer ID
+        try:
+            intent_label_id = intent_label_list.index(example.intent_label)
+        except ValueError:
+            raise ValueError(f"Intent label '{example.intent_label}' not found in intent label list.")
 
         features.append(
             TripletInputFeatures(
