@@ -435,26 +435,28 @@ class TripletProcessor(object):
 
 
 def convert_triplet_examples_to_features(
-        examples, max_seq_len, tokenizer, pad_token_label_id=-100, cls_token_segment_id=0,
-        pad_token_segment_id=0, sequence_a_segment_id=0, mask_padding_with_zero=True):
+        examples, max_seq_len, tokenizer, args, pad_token_label_id=-100,
+        cls_token_segment_id=0, pad_token_segment_id=0, sequence_a_segment_id=0,
+        mask_padding_with_zero=True):
+
     cls_token = tokenizer.cls_token
     sep_token = tokenizer.sep_token
     pad_token_id = tokenizer.pad_token_id
     features = []
 
-    # Load intent labels for mapping intent strings to integer IDs
-    intent_label_list = get_intent_labels(None)  # Assuming you load them globally or pass args
+    # Use the correct args object to load intent labels
+    intent_label_list = get_intent_labels(args)
 
     for (ex_index, example) in enumerate(examples):
         if ex_index % 5000 == 0:
             logger.info(f"Writing example {ex_index} of {len(examples)}")
 
-        # Tokenize sentences
+        # Tokenize anchor, positive, and negative sentences
         anchor_input_ids, anchor_attention_mask = tokenize_sentence(example.anchor_words, tokenizer, max_seq_len)
         positive_input_ids, positive_attention_mask = tokenize_sentence(example.positive_words, tokenizer, max_seq_len)
         negative_input_ids, negative_attention_mask = tokenize_sentence(example.negative_words, tokenizer, max_seq_len)
 
-        # Map intent label string to an integer ID
+        # Convert intent label to ID using the intent label list
         try:
             intent_label_id = intent_label_list.index(example.intent_label)
         except ValueError:
@@ -479,6 +481,7 @@ def convert_triplet_examples_to_features(
     return features
 
 
+
 def tokenize_sentence(words, tokenizer, max_seq_len):
     """Tokenizes and processes a sentence."""
     tokens = []
@@ -501,14 +504,6 @@ def tokenize_sentence(words, tokenizer, max_seq_len):
 
 
 def load_and_cache_triplet_examples(args, tokenizer, mode):
-    """
-    Loads and caches triplet examples for contrastive learning.
-
-    Args:
-        args: Arguments containing data and model configuration.
-        tokenizer: Pretrained tokenizer.
-        mode: Dataset mode ('train', 'dev', 'test').
-    """
     processor = TripletProcessor(args)
 
     cached_features_file = os.path.join(
@@ -523,12 +518,13 @@ def load_and_cache_triplet_examples(args, tokenizer, mode):
         logger.info(f"Creating triplet features from dataset at {args.data_dir}")
         examples = processor.get_triplet_examples(mode)
 
+        # Pass args to the function
         features = convert_triplet_examples_to_features(
-            examples, args.max_seq_len, tokenizer, pad_token_label_id=args.ignore_index
+            examples, args.max_seq_len, tokenizer, args, pad_token_label_id=args.ignore_index
         )
         torch.save(features, cached_features_file)
 
-    # Convert to Tensors and build dataset for triplet loss
+    # Convert to Tensors and build dataset
     all_anchor_input_ids = torch.tensor([f.anchor_input_ids for f in features], dtype=torch.long)
     all_positive_input_ids = torch.tensor([f.positive_input_ids for f in features], dtype=torch.long)
     all_negative_input_ids = torch.tensor([f.negative_input_ids for f in features], dtype=torch.long)
