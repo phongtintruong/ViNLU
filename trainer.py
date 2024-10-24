@@ -113,9 +113,6 @@ class Trainer(object):
                         "positive_token_type_ids": batch[7],
                         "negative_token_type_ids": batch[8],
                     }
-                    print("Anchor input IDs: ", inputs["input_ids"])
-                    print("Positive input IDs: ", inputs["positive_input_ids"])
-                    print("Negative input IDs: ", inputs["negative_input_ids"])
                 else:
                     inputs = {
                         "input_ids": batch[0],  # Regular input
@@ -126,8 +123,8 @@ class Trainer(object):
                     }
 
                 outputs = self.model(**inputs)
-                loss = outputs[0]
-                # loss, intent_loss, slot_loss, contrastive_loss = outputs[:4]
+                # loss = outputs[0]
+                loss, intent_loss, slot_loss, contrastive_loss = outputs[:4]
 
                 if self.args.gradient_accumulation_steps > 1:
                     loss = loss / self.args.gradient_accumulation_steps
@@ -146,10 +143,16 @@ class Trainer(object):
                     if global_step % self.args.logging_steps == 0:
                         print("\nTuning metrics:", self.args.tuning_metric)
                         results = self.evaluate("dev")
+                        writer.add_scalar("Loss/train", loss.item(), global_step)
+                        writer.add_scalar("Loss Intent/train", intent_loss.item(), global_step)
+                        writer.add_scalar("Loss Slot/train", slot_loss.item(), global_step)
+                        if contrastive_loss is not None:
+                            writer.add_scalar("Loss Contrastive/train", contrastive_loss.item(), global_step)
+
                         writer.add_scalar("Loss/validation", results["loss"], epoch)
-                        writer.add_scalar("Intent Loss/validation", results["intent_loss"], epoch)
-                        writer.add_scalar("Slot Loss/validation", results["slot_loss"], epoch)
-                        writer.add_scalar("Contrastive Loss/validation", results["contrastive_loss"], epoch)
+                        writer.add_scalar("Loss Intent/validation", results["intent_loss"], epoch)
+                        writer.add_scalar("Loss Slot/validation", results["slot_loss"], epoch)
+                        # writer.add_scalar("Loss Contrastive/validation", results["contrastive_loss"], epoch)
                         writer.add_scalar("Intent Acc/validation", results["intent_acc"], epoch)
                         writer.add_scalar("Slot F1/validation", results["slot_f1"], epoch)
                         writer.add_scalar("Mean Intent Slot/validation", results["mean_intent_slot"], epoch)
@@ -190,7 +193,7 @@ class Trainer(object):
         logger.info(f"  Num examples = {len(dataset)}")
         logger.info(f"  Batch size = {self.args.eval_batch_size}")
 
-        eval_loss, intent_loss_sum, slot_loss_sum, contrastive_loss_sum = 0.0, 0.0, 0.0, 0.0
+        eval_loss, intent_loss_sum, slot_loss_sum = 0.0, 0.0, 0.0
         nb_eval_steps = 0
         intent_preds, slot_preds = None, None
         out_intent_label_ids, out_slot_labels_ids = None, None
@@ -217,7 +220,7 @@ class Trainer(object):
                 eval_loss += tmp_eval_loss.mean().item()
                 intent_loss_sum += intent_loss.mean().item() if intent_loss is not None else 0.0
                 slot_loss_sum += slot_loss.mean().item() if slot_loss is not None else 0.0
-                contrastive_loss_sum += contrastive_loss.mean().item() if contrastive_loss is not None else 0.0
+                # contrastive_loss_sum += contrastive_loss.mean().item() if contrastive_loss is not None else 0.0
 
                 nb_eval_steps += 1
 
@@ -245,13 +248,13 @@ class Trainer(object):
         avg_eval_loss = eval_loss / nb_eval_steps
         avg_intent_loss = intent_loss_sum / nb_eval_steps
         avg_slot_loss = slot_loss_sum / nb_eval_steps
-        avg_contrastive_loss = contrastive_loss_sum / nb_eval_steps
+        # avg_contrastive_loss = contrastive_loss_sum / nb_eval_steps
 
         results = {
             "loss": avg_eval_loss,
             "intent_loss": avg_intent_loss,
             "slot_loss": avg_slot_loss,
-            "contrastive_loss": avg_contrastive_loss,
+            # "contrastive_loss": avg_contrastive_loss,
         }
 
 
