@@ -42,6 +42,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to use contrastive learning with triplet input (anchor, positive, negative samples)"
     )
+    parser.add_argument("--contrastive_margin", type=float, default=0.3, help="Margin for triplet loss")
 
     # Other arguments (kept from the original version)
     parser.add_argument("--model_dir", default=None, required=True, type=str, help="Path to save, load model")

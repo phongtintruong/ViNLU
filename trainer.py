@@ -113,6 +113,9 @@ class Trainer(object):
                         "positive_token_type_ids": batch[7],
                         "negative_token_type_ids": batch[8],
                     }
+                    print("Anchor input IDs: ", inputs["input_ids"])
+                    print("Positive input IDs: ", inputs["positive_input_ids"])
+                    print("Negative input IDs: ", inputs["negative_input_ids"])
                 else:
                     inputs = {
                         "input_ids": batch[0],  # Regular input
