@@ -142,12 +142,11 @@ class Trainer(object):
 
                     if global_step % self.args.logging_steps == 0:
                         print("\nTuning metrics:", self.args.tuning_metric)
+                        print("Loss/train:", tr_loss / global_step)
+                        print("Loss Intent/train:", intent_loss)
+                        print("Loss Slot/train:", slot_loss)
+                        print("Loss Contrastive/train:", contrastive_loss)
                         results = self.evaluate("dev")
-                        writer.add_scalar("Loss/train", loss.item(), global_step)
-                        writer.add_scalar("Loss Intent/train", intent_loss.item(), global_step)
-                        writer.add_scalar("Loss Slot/train", slot_loss.item(), global_step)
-                        if contrastive_loss is not None:
-                            writer.add_scalar("Loss Contrastive/train", contrastive_loss.item(), global_step)
 
                         writer.add_scalar("Loss/validation", results["loss"], epoch)
                         writer.add_scalar("Loss Intent/validation", results["intent_loss"], epoch)
