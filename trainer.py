@@ -195,13 +195,15 @@ class Trainer(object):
                     out_slot_labels_ids = inputs["slot_labels_ids"].detach().cpu().numpy()
                 else:
                     slot_preds = np.append(slot_preds, np.array(self.model.crf.decode(slot_logits)), axis=0)
+                    out_slot_labels_ids = np.append(
+                        out_slot_labels_ids, inputs["slot_labels_ids"].detach().cpu().numpy(), axis=0
+                    )
 
         eval_loss /= nb_eval_steps
         results = {"loss": eval_loss}
-        intent_preds = np.argmax(intent_preds, axis=1)
 
-        # if not self.args.use_crf:
-        #     slot_preds = np.argmax(slot_preds, axis=2)
+        # Intent result
+        intent_preds = np.argmax(intent_preds, axis=1)
 
         # Slot result
         if not self.args.use_crf:
@@ -215,6 +217,8 @@ class Trainer(object):
                 if out_slot_labels_ids[i, j] != self.pad_token_label_id:
                     out_slot_label_list[i].append(slot_label_map[out_slot_labels_ids[i][j]])
                     slot_preds_list[i].append(slot_label_map[slot_preds[i][j]])
+
+        # print(len(intent_preds), len(out_intent_label_ids), len(slot_preds_list), len(out_slot_label_list))
 
         total_result = compute_metrics(intent_preds, out_intent_label_ids, slot_preds_list, out_slot_label_list)
         results.update(total_result)
