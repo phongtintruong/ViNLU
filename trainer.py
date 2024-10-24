@@ -107,10 +107,10 @@ class Trainer(object):
                 else:
                     inputs = {
                         "input_ids": batch[0],  # Regular input
-                        "attention_mask": batch[3],
-                        "token_type_ids": batch[6],
-                        "intent_label_ids": batch[9],
-                        "slot_labels_ids": batch[10],
+                        "attention_mask": batch[1],
+                        "token_type_ids": batch[2],
+                        "intent_label_ids": batch[3],
+                        "slot_labels_ids": batch[4],
                     }
 
                 outputs = self.model(**inputs)
@@ -171,10 +171,10 @@ class Trainer(object):
             with torch.no_grad():
                 inputs = {
                     "input_ids": batch[0],
-                    "attention_mask": batch[3],
-                    "token_type_ids": batch[6],
-                    "intent_label_ids": batch[9],
-                    "slot_labels_ids": batch[10],
+                    "attention_mask": batch[1],
+                    "token_type_ids": batch[2],
+                    "intent_label_ids": batch[3],
+                    "slot_labels_ids": batch[4],
                 }
                 outputs = self.model(**inputs)
                 tmp_eval_loss, (intent_logits, slot_logits) = outputs[:2]
