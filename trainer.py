@@ -20,11 +20,10 @@ class Trainer(object):
 
         self.intent_label_lst = get_intent_labels(args)
         self.slot_label_lst = get_slot_labels(args)
-        self.pad_token_label_id = args.ignore_index  # Ignore index for loss padding
+        self.pad_token_label_id = args.ignore_index
 
         self.config_class, self.model_class, _ = MODEL_CLASSES[args.model_type]
 
-        # Load model (pretrained or from scratch)
         if args.pretrained:
             self.model = self.model_class.from_pretrained(
                 args.pretrained_path,
@@ -42,8 +41,6 @@ class Trainer(object):
                 slot_label_lst=self.slot_label_lst,
             )
 
-        # Set device (GPU/CPU)
-        torch.cuda.set_device(args.gpu_id)
         self.device = "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
         self.model.to(self.device)
 
@@ -52,7 +49,6 @@ class Trainer(object):
         train_dataloader = DataLoader(self.train_dataset, sampler=train_sampler, batch_size=self.args.train_batch_size)
         writer = SummaryWriter(log_dir=self.args.model_dir)
 
-        # Calculate total training steps
         if self.args.max_steps > 0:
             t_total = self.args.max_steps
             self.args.num_train_epochs = (
@@ -61,90 +57,6 @@ class Trainer(object):
         else:
             t_total = len(train_dataloader) // self.args.gradient_accumulation_steps * self.args.num_train_epochs
 
-        # Prepare optimizer and scheduler
-        optimizer_grouped_parameters = self._get_optimizer_params()
-        optimizer = AdamW(optimizer_grouped_parameters, lr=self.args.learning_rate, eps=self.args.adam_epsilon)
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=t_total
-        )
-
-        logger.info("***** Running training *****")
-        global_step, tr_loss = 0, 0.0
-        self.model.zero_grad()
-        early_stopping = EarlyStopping(patience=self.args.early_stopping, verbose=True)
-
-        train_iterator = trange(int(self.args.num_train_epochs), desc="Epoch")
-        for _ in train_iterator:
-            epoch_iterator = tqdm(train_dataloader, desc="Iteration")
-            for step, batch in enumerate(epoch_iterator):
-                self.model.train()
-                batch = tuple(t.to(self.device) for t in batch)
-
-                # Prepare inputs based on whether contrastive learning is used
-                if self.args.use_contrastive_learning:
-                    inputs = self._prepare_contrastive_inputs(batch)
-                else:
-                    inputs = self._prepare_standard_inputs(batch)
-
-                # Forward pass and compute loss
-                outputs = self.model(**inputs)
-                loss = outputs[0]  # Weighted total loss
-
-                if self.args.gradient_accumulation_steps > 1:
-                    loss = loss / self.args.gradient_accumulation_steps
-
-                loss.backward()
-                tr_loss += loss.item()
-
-                if (step + 1) % self.args.gradient_accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-                    optimizer.step()
-                    scheduler.step()
-                    self.model.zero_grad()
-                    global_step += 1
-
-                    if global_step % self.args.logging_steps == 0:
-                        results = self.evaluate("dev")
-                        self._log_metrics(writer, results, global_step)
-                        early_stopping(results[self.args.tuning_metric], self.model, self.args)
-                        if early_stopping.early_stop:
-                            logger.info("Early stopping")
-                            break
-
-                if 0 < self.args.max_steps < global_step:
-                    epoch_iterator.close()
-                    break
-
-            if 0 < self.args.max_steps < global_step or early_stopping.early_stop:
-                train_iterator.close()
-                break
-
-        return global_step, tr_loss / global_step
-
-    def _prepare_standard_inputs(self, batch):
-        """Prepare inputs for standard joint learning."""
-        inputs = {
-            "input_ids": batch[0],
-            "attention_mask": batch[1],
-            "intent_label_ids": batch[3],
-            "slot_labels_ids": batch[4],
-        }
-        if self.args.model_type != "distilbert":
-            inputs["token_type_ids"] = batch[2]
-        return inputs
-
-    def _prepare_contrastive_inputs(self, batch):
-        """Prepare inputs for contrastive learning."""
-        inputs = self._prepare_standard_inputs(batch)
-        inputs.update({
-            "anchor": batch[5],
-            "positive": batch[6],
-            "negative": batch[7],
-        })
-        return inputs
-
-    def _get_optimizer_params(self):
-        """Get optimizer parameters with correct weight decay."""
         no_decay = ["bias", "LayerNorm.weight"]
         optimizer_grouped_parameters = [
             {
@@ -156,54 +68,146 @@ class Trainer(object):
                 "weight_decay": 0.0,
             },
         ]
-        return optimizer_grouped_parameters
+        optimizer = AdamW(optimizer_grouped_parameters, lr=self.args.learning_rate, eps=self.args.adam_epsilon)
+        scheduler = get_linear_schedule_with_warmup(optimizer, self.args.warmup_steps, t_total)
 
-    def _log_metrics(self, writer, results, global_step):
-        """Log metrics to TensorBoard."""
-        writer.add_scalar("Loss/validation", results["loss"], global_step)
-        writer.add_scalar("Intent Accuracy/validation", results["intent_acc"], global_step)
-        writer.add_scalar("Slot F1/validation", results["slot_f1"], global_step)
-        writer.add_scalar("Semantic Frame Accuracy", results["semantic_frame_acc"], global_step)
+        logger.info("***** Running training *****")
+        logger.info(f"  Num examples = {len(self.train_dataset)}")
+        logger.info(f"  Num Epochs = {self.args.num_train_epochs}")
+        logger.info(f"  Total optimization steps = {t_total}")
+
+        global_step = 0
+        tr_loss = 0.0
+        self.model.zero_grad()
+        train_iterator = trange(int(self.args.num_train_epochs), desc="Epoch")
+        early_stopping = EarlyStopping(patience=self.args.early_stopping, verbose=True)
+
+        for epoch in train_iterator:
+            epoch_iterator = tqdm(train_dataloader, desc="Iteration", position=0, leave=True)
+
+            for step, batch in enumerate(epoch_iterator):
+                self.model.train()
+                batch = tuple(t.to(self.device) for t in batch)
+
+                # Unpack batch depending on contrastive learning flag
+                if self.args.use_contrastive_learning:
+                    inputs = {
+                        "input_ids": batch[0],  # Anchor input
+                        "attention_mask": batch[3],
+                        "token_type_ids": batch[6],
+                        "positive_input_ids": batch[1],  # Positive input
+                        "positive_attention_mask": batch[4],
+                        "negative_input_ids": batch[2],  # Negative input
+                        "negative_attention_mask": batch[5],
+                        "intent_label_ids": batch[9],  # Intent labels
+                        "slot_labels_ids": batch[10],  # Slot labels
+                        "positive_token_type_ids": batch[7],
+                        "negative_token_type_ids": batch[8],
+                    }
+                else:
+                    inputs = {
+                        "input_ids": batch[0],  # Regular input
+                        "attention_mask": batch[3],
+                        "token_type_ids": batch[6],
+                        "intent_label_ids": batch[9],
+                        "slot_labels_ids": batch[10],
+                    }
+
+                outputs = self.model(**inputs)
+                loss = outputs[0]
+
+                if self.args.gradient_accumulation_steps > 1:
+                    loss = loss / self.args.gradient_accumulation_steps
+
+                loss.backward()
+
+                tr_loss += loss.item()
+                if (step + 1) % self.args.gradient_accumulation_steps == 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+
+                    optimizer.step()
+                    scheduler.step()
+                    self.model.zero_grad()
+                    global_step += 1
+
+                    if global_step % self.args.logging_steps == 0:
+                        results = self.evaluate("dev")
+                        writer.add_scalar("Loss/validation", results["loss"], global_step)
+
+                        early_stopping(results[self.args.tuning_metric], self.model, self.args)
+                        if early_stopping.early_stop:
+                            logger.info("Early stopping")
+                            break
+
+                if 0 < self.args.max_steps <= global_step:
+                    epoch_iterator.close()
+                    break
+
+            if early_stopping.early_stop:
+                train_iterator.close()
+                break
+
+        return global_step, tr_loss / global_step
 
     def evaluate(self, mode):
-        """Evaluation loop for development or test datasets."""
         dataset = self.dev_dataset if mode == "dev" else self.test_dataset
         eval_sampler = SequentialSampler(dataset)
         eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=self.args.eval_batch_size)
 
         logger.info(f"***** Running evaluation on {mode} dataset *****")
-        eval_loss, nb_eval_steps = 0.0, 0
-        intent_preds, slot_preds, out_intent_label_ids, out_slot_labels_ids = None, None, None, None
+        logger.info(f"  Num examples = {len(dataset)}")
+        logger.info(f"  Batch size = {self.args.eval_batch_size}")
+
+        eval_loss = 0.0
+        nb_eval_steps = 0
+        intent_preds, slot_preds = None, None
+        out_intent_label_ids, out_slot_labels_ids = None, None
 
         self.model.eval()
+
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             batch = tuple(t.to(self.device) for t in batch)
+
             with torch.no_grad():
-                inputs = self._prepare_standard_inputs(batch)
+                inputs = {
+                    "input_ids": batch[0],
+                    "attention_mask": batch[3],
+                    "token_type_ids": batch[6],
+                    "intent_label_ids": batch[9],
+                    "slot_labels_ids": batch[10],
+                }
                 outputs = self.model(**inputs)
                 tmp_eval_loss, (intent_logits, slot_logits) = outputs[:2]
+
                 eval_loss += tmp_eval_loss.mean().item()
+                nb_eval_steps += 1
 
                 # Collect predictions
-                intent_preds, out_intent_label_ids = self._append_preds(intent_preds, intent_logits, out_intent_label_ids, inputs["intent_label_ids"])
-                slot_preds, out_slot_labels_ids = self._append_preds(slot_preds, slot_logits, out_slot_labels_ids, inputs["slot_labels_ids"])
+                if intent_preds is None:
+                    intent_preds = intent_logits.detach().cpu().numpy()
+                    out_intent_label_ids = inputs["intent_label_ids"].detach().cpu().numpy()
+                else:
+                    intent_preds = np.append(intent_preds, intent_logits.detach().cpu().numpy(), axis=0)
+                    out_intent_label_ids = np.append(out_intent_label_ids, inputs["intent_label_ids"].detach().cpu().numpy(), axis=0)
+
+                if slot_preds is None:
+                    slot_preds = np.array(self.model.crf.decode(slot_logits)) if self.args.use_crf else slot_logits.detach().cpu().numpy()
+                    out_slot_labels_ids = inputs["slot_labels_ids"].detach().cpu().numpy()
+                else:
+                    slot_preds = np.append(slot_preds, slot_logits.detach().cpu().numpy(), axis=0)
 
         eval_loss /= nb_eval_steps
         results = {"loss": eval_loss}
-        results.update(compute_metrics(intent_preds, out_intent_label_ids, slot_preds, out_slot_labels_ids))
+        intent_preds = np.argmax(intent_preds, axis=1)
+
+        if not self.args.use_crf:
+            slot_preds = np.argmax(slot_preds, axis=2)
+
+        total_result = compute_metrics(intent_preds, out_intent_label_ids, slot_preds, out_slot_labels_ids)
+        results.update(total_result)
 
         logger.info("***** Eval results *****")
         for key, value in results.items():
-            logger.info(f"{key} = {value}")
+            logger.info(f"  {key} = {value}")
 
         return results
-
-    def _append_preds(self, preds, logits, out_labels, labels):
-        """Helper to append predictions and labels."""
-        if preds is None:
-            preds = logits.detach().cpu().numpy()
-            out_labels = labels.detach().cpu().numpy()
-        else:
-            preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-            out_labels = np.append(out_labels, labels.detach().cpu().numpy(), axis=0)
-        return preds, out_labels
