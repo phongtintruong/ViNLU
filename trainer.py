@@ -194,7 +194,7 @@ class Trainer(object):
                     slot_preds = np.array(self.model.crf.decode(slot_logits)) if self.args.use_crf else slot_logits.detach().cpu().numpy()
                     out_slot_labels_ids = inputs["slot_labels_ids"].detach().cpu().numpy()
                 else:
-                    slot_preds = np.append(slot_preds, slot_logits.detach().cpu().numpy(), axis=0)
+                    slot_preds = np.append(slot_preds, np.array(self.model.crf.decode(slot_logits)).detach().cpu().numpy(), axis=0)
 
         eval_loss /= nb_eval_steps
         results = {"loss": eval_loss}
