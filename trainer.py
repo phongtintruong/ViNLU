@@ -71,10 +71,18 @@ class Trainer(object):
         optimizer = AdamW(optimizer_grouped_parameters, lr=self.args.learning_rate, eps=self.args.adam_epsilon)
         scheduler = get_linear_schedule_with_warmup(optimizer, self.args.warmup_steps, t_total)
 
+        # logger.info("***** Running training *****")
+        # logger.info(f"  Num examples = {len(self.train_dataset)}")
+        # logger.info(f"  Num Epochs = {self.args.num_train_epochs}")
+        # logger.info(f"  Total optimization steps = {t_total}")
         logger.info("***** Running training *****")
-        logger.info(f"  Num examples = {len(self.train_dataset)}")
-        logger.info(f"  Num Epochs = {self.args.num_train_epochs}")
-        logger.info(f"  Total optimization steps = {t_total}")
+        logger.info("  Num examples = %d", len(self.train_dataset))
+        logger.info("  Num Epochs = %d", self.args.num_train_epochs)
+        logger.info("  Total train batch size = %d", self.args.train_batch_size)
+        logger.info("  Gradient Accumulation steps = %d", self.args.gradient_accumulation_steps)
+        logger.info("  Total optimization steps = %d", t_total)
+        logger.info("  Logging steps = %d", self.args.logging_steps)
+        logger.info("  Save steps = %d", self.args.save_steps)
 
         global_step = 0
         tr_loss = 0.0
@@ -84,6 +92,7 @@ class Trainer(object):
 
         for epoch in train_iterator:
             epoch_iterator = tqdm(train_dataloader, desc="Iteration", position=0, leave=True)
+            print("\nEpoch: ", epoch)
 
             for step, batch in enumerate(epoch_iterator):
                 self.model.train()
@@ -115,6 +124,7 @@ class Trainer(object):
 
                 outputs = self.model(**inputs)
                 loss = outputs[0]
+                # loss, intent_loss, slot_loss, contrastive_loss = outputs[:4]
 
                 if self.args.gradient_accumulation_steps > 1:
                     loss = loss / self.args.gradient_accumulation_steps
@@ -131,8 +141,16 @@ class Trainer(object):
                     global_step += 1
 
                     if global_step % self.args.logging_steps == 0:
+                        print("\nTuning metrics:", self.args.tuning_metric)
                         results = self.evaluate("dev")
-                        writer.add_scalar("Loss/validation", results["loss"], global_step)
+                        writer.add_scalar("Loss/validation", results["loss"], epoch)
+                        writer.add_scalar("Intent Loss/validation", results["intent_loss"], epoch)
+                        writer.add_scalar("Slot Loss/validation", results["slot_loss"], epoch)
+                        writer.add_scalar("Contrastive Loss/validation", results["contrastive_loss"], epoch)
+                        writer.add_scalar("Intent Acc/validation", results["intent_acc"], epoch)
+                        writer.add_scalar("Slot F1/validation", results["slot_f1"], epoch)
+                        writer.add_scalar("Mean Intent Slot/validation", results["mean_intent_slot"], epoch)
+                        writer.add_scalar("Sentence Acc/validation", results["semantic_frame_acc"], epoch)
 
                         early_stopping(results[self.args.tuning_metric], self.model, self.args)
                         if early_stopping.early_stop:
@@ -146,8 +164,19 @@ class Trainer(object):
             if early_stopping.early_stop:
                 train_iterator.close()
                 break
+            writer.add_scalar("Loss/train", tr_loss / global_step, epoch)
 
         return global_step, tr_loss / global_step
+
+    def write_evaluation_result(self, out_file, results):
+        out_file = self.args.model_dir + "/" + out_file
+        w = open(out_file, "w", encoding="utf-8")
+        w.write("***** Eval results *****\n")
+        for key in sorted(results.keys()):
+            to_write = " {key} = {value}".format(key=key, value=str(results[key]))
+            w.write(to_write)
+            w.write("\n")
+        w.close()
 
     def evaluate(self, mode):
         dataset = self.dev_dataset if mode == "dev" else self.test_dataset
@@ -158,7 +187,7 @@ class Trainer(object):
         logger.info(f"  Num examples = {len(dataset)}")
         logger.info(f"  Batch size = {self.args.eval_batch_size}")
 
-        eval_loss = 0.0
+        eval_loss, intent_loss_sum, slot_loss_sum, contrastive_loss_sum = 0.0, 0.0, 0.0, 0.0
         nb_eval_steps = 0
         intent_preds, slot_preds = None, None
         out_intent_label_ids, out_slot_labels_ids = None, None
@@ -177,9 +206,16 @@ class Trainer(object):
                     "slot_labels_ids": batch[4],
                 }
                 outputs = self.model(**inputs)
-                tmp_eval_loss, (intent_logits, slot_logits) = outputs[:2]
+                # tmp_eval_loss, (intent_logits, slot_logits) = outputs[:2]
+                tmp_eval_loss, intent_loss, slot_loss, contrastive_loss, (intent_logits, slot_logits) = outputs[:5]
 
+                # eval_loss += tmp_eval_loss.mean().item()
+                # Accumulate losses
                 eval_loss += tmp_eval_loss.mean().item()
+                intent_loss_sum += intent_loss.mean().item() if intent_loss is not None else 0.0
+                slot_loss_sum += slot_loss.mean().item() if slot_loss is not None else 0.0
+                contrastive_loss_sum += contrastive_loss.mean().item() if contrastive_loss is not None else 0.0
+
                 nb_eval_steps += 1
 
                 # Collect predictions
@@ -199,8 +235,22 @@ class Trainer(object):
                         out_slot_labels_ids, inputs["slot_labels_ids"].detach().cpu().numpy(), axis=0
                     )
 
-        eval_loss /= nb_eval_steps
-        results = {"loss": eval_loss}
+        # eval_loss /= nb_eval_steps
+        # results = {"loss": eval_loss}
+
+        # Compute average losses
+        avg_eval_loss = eval_loss / nb_eval_steps
+        avg_intent_loss = intent_loss_sum / nb_eval_steps
+        avg_slot_loss = slot_loss_sum / nb_eval_steps
+        avg_contrastive_loss = contrastive_loss_sum / nb_eval_steps
+
+        results = {
+            "loss": avg_eval_loss,
+            "intent_loss": avg_intent_loss,
+            "slot_loss": avg_slot_loss,
+            "contrastive_loss": avg_contrastive_loss,
+        }
+
 
         # Intent result
         intent_preds = np.argmax(intent_preds, axis=1)
@@ -223,8 +273,45 @@ class Trainer(object):
         total_result = compute_metrics(intent_preds, out_intent_label_ids, slot_preds_list, out_slot_label_list)
         results.update(total_result)
 
-        logger.info("***** Eval results *****")
-        for key, value in results.items():
-            logger.info(f"  {key} = {value}")
+        # logger.info("***** Eval results *****")
+        # for key, value in results.items():
+        #     logger.info(f"  {key} = {value}")
+        #
+        # return results
 
+        logger.info("***** Eval results *****")
+        for key in sorted(results.keys()):
+            logger.info("  %s = %s", key, str(results[key]))
+        if mode == "test":
+            self.write_evaluation_result("eval_test_results.txt", results)
+        elif mode == "dev":
+            self.write_evaluation_result("eval_dev_results.txt", results)
         return results
+
+    def save_model(self):
+        # Save model checkpoint (Overwrite)
+        if not os.path.exists(self.args.model_dir):
+            os.makedirs(self.args.model_dir)
+        model_to_save = self.model.module if hasattr(self.model, "module") else self.model
+        model_to_save.save_pretrained(self.args.model_dir)
+
+        # Save training arguments together with the trained model
+        torch.save(self.args, os.path.join(self.args.model_dir, "training_args.bin"))
+        logger.info("Saving model checkpoint to %s", self.args.model_dir)
+
+    def load_model(self):
+        # Check whether model exists
+        if not os.path.exists(self.args.model_dir):
+            raise Exception("Model doesn't exists! Train first!")
+
+        try:
+            self.model = self.model_class.from_pretrained(
+                self.args.model_dir,
+                args=self.args,
+                intent_label_lst=self.intent_label_lst,
+                slot_label_lst=self.slot_label_lst,
+            )
+            self.model.to(self.device)
+            logger.info("***** Model Loaded *****")
+        except Exception:
+            raise Exception("Some model files might be missing...")

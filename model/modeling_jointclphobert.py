@@ -55,6 +55,7 @@ class JointCLPhoBERT(RobertaPreTrainedModel):
             slot_logits = self.slot_classifier(sequence_output, intent_logits, tmp_attention_mask)
 
         total_loss = 0
+        intent_loss, slot_loss, contrastive_loss = None, None, None
 
         # 1. Intent Loss
         if intent_label_ids is not None:
@@ -102,7 +103,14 @@ class JointCLPhoBERT(RobertaPreTrainedModel):
 
             total_loss += self.args.contrastive_loss_weight * contrastive_loss
 
-        outputs = ((intent_logits, slot_logits),) + outputs[2:]
-        outputs = (total_loss,) + outputs
+        # outputs = ((intent_logits, slot_logits),) + outputs[2:]
+        # outputs = (total_loss,) + outputs
+        #
+        # return outputs  # (loss), logits, (hidden_states), (attentions)
 
-        return outputs  # (loss), logits, (hidden_states), (attentions)
+        # Prepare final outputs
+        additional_outputs = outputs[2:]  # Hidden states, attentions
+        return (
+            total_loss, intent_loss, slot_loss, contrastive_loss,
+            (intent_logits, slot_logits), *additional_outputs
+        )
