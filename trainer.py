@@ -216,7 +216,7 @@ class Trainer(object):
                     out_slot_label_list[i].append(slot_label_map[out_slot_labels_ids[i][j]])
                     slot_preds_list[i].append(slot_label_map[slot_preds[i][j]])
 
-        total_result = compute_metrics(intent_preds, out_intent_label_ids, slot_preds, out_slot_labels_ids)
+        total_result = compute_metrics(intent_preds, out_intent_label_ids, slot_preds, out_slot_label_list)
         results.update(total_result)
 
         logger.info("***** Eval results *****")
