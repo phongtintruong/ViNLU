@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import pandas as pd
 
 import torch
 from torch.utils.data import TensorDataset
@@ -343,6 +344,24 @@ class TripletInputFeatures(object):
 
 class JointProcessorForTriplet(JointProcessor):
     """Processor for creating triplet examples for contrastive learning."""
+    def __init__(self, args):
+        super().__init__(args)
+        # Load the CSV file mapping anchor classes to additional negative classes
+        self.negative_class_map = self._load_negative_class_map(args.negative_class_csv)
+
+    def _load_negative_class_map(self, csv_path):
+        """Load CSV containing anchor-to-negative class mappings."""
+        data_path = os.path.join(self.args.data_dir, self.args.token_level)
+
+        df = pd.read_csv(os.path.join(data_path, csv_path))
+        negative_class_map = {}
+        for _, row in df.iterrows():
+            anchor_class = row['anchor_class']
+            negative_class = row['negative_class']
+            if anchor_class not in negative_class_map:
+                negative_class_map[anchor_class] = []
+            negative_class_map[anchor_class].append(negative_class)
+        return negative_class_map
 
     def get_examples(self, mode):
         """
@@ -372,39 +391,58 @@ class JointProcessorForTriplet(JointProcessor):
             anchor_intent_label = self.intent_labels.index(anchor_intent) if anchor_intent in self.intent_labels else self.intent_labels.index("UNK")
             anchor_slot_labels = [self.slot_labels.index(s) if s in self.slot_labels else self.slot_labels.index("UNK") for s in anchor_slot.split()]
 
-            # Get a positive example (same intent as the anchor)
-            positive_text, positive_slot = self._get_positive_example(anchor_intent_label, intent_groups)
-            positive_words = positive_text.split()
+            # Step 1: Select 1 negative sample from each different intent class
+            negative_samples = self._get_negatives_from_other_classes(anchor_intent_label, intent_groups)
 
-            # Get a negative example (different intent from the anchor)
-            negative_text, negative_slot = self._get_negative_example(anchor_intent_label, intent_groups)
-            negative_words = negative_text.split()
+            # Step 2: Add 2 more negatives from specific negative classes (from CSV)
+            additional_negatives = self._get_negatives_from_csv(anchor_intent_label, intent_groups, num_negatives=2)
+            negative_samples.extend(additional_negatives)
 
-            # Create a triplet example
-            examples.append(TripletInputExample(
-                guid=guid,
-                anchor_words=anchor_words,
-                positive_words=positive_words,
-                negative_words=negative_words,
-                intent_label=anchor_intent_label,
-                slot_labels=anchor_slot_labels
-            ))
+            # Step 3: Balance positive samples to match the number of negatives
+            positive_samples = self._get_balanced_positive_samples(anchor_intent_label, intent_groups,
+                                                                   len(negative_samples))
+
+            # Step 4: Create triplets with each positive-negative pair
+            for pos, neg in zip(positive_samples, negative_samples):
+                positive_words = pos[0].split()
+                negative_words = neg[0].split()
+
+                examples.append(TripletInputExample(
+                    guid=guid,
+                    anchor_words=anchor_words,
+                    positive_words=positive_words,
+                    negative_words=negative_words,
+                    intent_label=anchor_intent_label,
+                    slot_labels=anchor_slot_labels
+                ))
 
         return examples
 
-    def _get_positive_example(self, intent_label, intent_groups):
-        """Find a positive example (same intent) for the given anchor's intent label."""
-        same_intent_group = intent_groups[intent_label]
-        # Randomly select a positive example from the same intent group
-        positive_example = random.choice(same_intent_group)
-        return positive_example
+    def _get_negatives_from_other_classes(self, intent_label, intent_groups):
+        """Get one negative sample from each different intent class."""
+        negative_samples = []
+        other_intents = [label for label in intent_groups if label != intent_label]
+        for neg_intent_label in other_intents:
+            negative_samples.append(random.choice(intent_groups[neg_intent_label]))
+        return negative_samples
 
-    def _get_negative_example(self, intent_label, intent_groups):
-        """Find a negative example (different intent) for the given anchor's intent label."""
-        # Choose a random intent group that is not the anchor's intent
-        negative_intent_label = random.choice([label for label in intent_groups if label != intent_label])
-        negative_example = random.choice(intent_groups[negative_intent_label])
-        return negative_example
+    def _get_negatives_from_csv(self, intent_label, intent_groups, num_negatives=2):
+        """Get additional negatives from classes specified in the CSV mapping."""
+        additional_negatives = []
+        mapped_neg_classes = self.negative_class_map.get(intent_label, [])
+        for neg_class in mapped_neg_classes:
+            if neg_class in intent_groups:
+                additional_negatives.extend(random.sample(intent_groups[neg_class], min(num_negatives, len(intent_groups[neg_class]))))
+        return additional_negatives[:num_negatives]  # Limit to `num_negatives`
+
+    def _get_balanced_positive_samples(self, intent_label, intent_groups, num_samples):
+        """Get a balanced number of positive samples to match the number of negatives."""
+        positive_samples = intent_groups[intent_label]
+        if len(positive_samples) >= num_samples:
+            return random.sample(positive_samples, num_samples)
+        else:
+            return positive_samples * (num_samples // len(positive_samples)) + random.sample(positive_samples, num_samples % len(positive_samples))
+
 
 
 def convert_triplet_examples_to_features(

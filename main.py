@@ -45,6 +45,7 @@ if __name__ == "__main__":
     parser.add_argument("--contrastive_margin", type=float, default=0.3, help="Margin for triplet loss")
 
     # Other arguments (kept from the original version)
+    parser.add_argument("--negative_class_csv", default="negative_class.csv", type=str, help="Negative class for each class")
     parser.add_argument("--model_dir", default=None, required=True, type=str, help="Path to save, load model")
     parser.add_argument("--data_dir", default="./PhoATIS", type=str, help="The input data dir")
     parser.add_argument("--intent_label_file", default="intent_label.txt", type=str, help="Intent Label file")
