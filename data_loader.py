@@ -394,6 +394,9 @@ class JointProcessorForTriplet(JointProcessor):
             # Step 1: Select 1 negative sample from each different intent class
             negative_samples = self._get_negatives_from_other_classes(anchor_intent_label, intent_groups)
 
+            # random select 3 negative samples
+            negative_samples = random.sample(negative_samples, self.args.num_negative_samples-2)
+
             # Step 2: Add 2 more negatives from specific negative classes (from CSV)
             additional_negatives = self._get_negatives_from_csv(anchor_intent_label, intent_groups, num_negatives=2)
             negative_samples.extend(additional_negatives)
